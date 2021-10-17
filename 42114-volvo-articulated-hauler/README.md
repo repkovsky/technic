@@ -18,6 +18,8 @@ In the *automatic* mode, gears are changed when program detects that motor's spe
 
 In the *manual* mode gear is decreased by pressing left red button, and increased with right red button. Gearbox positions are indicated by the color of LED: 1: yellow, 2: orange, 3: red, Dumper: green.
 
+Demo of the operation can be found here: https://youtu.be/j4ZxOhXygNY
+
 ![](./remote_description.png)
 
 ## How does it work?
