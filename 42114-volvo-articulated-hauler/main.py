@@ -1,3 +1,6 @@
+# Controlling LEGO Volvo Articulated Hauler (42114) with Bluetooth Remote (88010)
+# Version 1.1
+
 # Remote is currently in beta. This program only works with firmware
 # installed from <https://beta.pybricks.com>.
 
@@ -24,6 +27,8 @@ class Gearbox:
     GEAR_RESET_TIMEOUT = 2000
     # time [ms] of speed stability measurement before automatic gear change
     STABLE_SPEED_TIME = 800
+    # time [ms] for normal gear switch
+    GEAR_SWITCH_TIMEOUT = 1500
     # speed measurement smoothing factor
     SMOOTHING = 0.05
     # colors of gearbox state indicator LED for automatic (True) and manual (False)
@@ -31,8 +36,6 @@ class Gearbox:
     POS_COLOR = {True: [Color.CYAN, Color.BLUE, Color.MAGENTA, Color.GREEN],
                  False: [Color.ORANGE,  Color(h=15, s=100, v=100),
                          Color(h=5, s=100, v=100), Color.GREEN]}
-    POS_ANGLE = [90, 0, -90, -180]
-
     def __init__(self, remote):
         # initialize class properties
         self.remote = remote
@@ -41,18 +44,25 @@ class Gearbox:
         self.speed = 0
         # initialize L motor
         self.gearbox = Motor(Port.B)
-        self.gearbox.control.limits(speed=2000, acceleration=3000)
+        self.gearbox.control.limits(speed=2000, acceleration=4000)
+        self.callibrate()
+        # set defaults
+        self.prev_gear = 0
+        self.set_auto(INIT_GEARBOX_AUTO)
+
+    def callibrate(self):
         # callibrate gearbox motor by finding its physical rotation limit; 
-        # use small duty_limit to avoid twisting 12-axle and measurement error
+        # first, move left at full power to handle possible jam in gearbox
+        self.gearbox.run_until_stalled(500, duty_limit=100)
+        # second, correct the position
+        self.gearbox.run_angle(500, -90)
+        # finally move left with small power to avoid twisting 12-axle and measurement error
         stalled_angle = self.gearbox.run_until_stalled(500, duty_limit=10)
         # round to multiple of 90 degrees and subtract angle of physical block (90deg)
         base_angle = 90*round(stalled_angle/90)-90
         # adjust settings of possible motor positions
-        self.POS_ANGLE = [p+base_angle for p in self.POS_ANGLE]
-        # set defaults
+        self.pos_angle = [p+base_angle for p in [90, 0, -90, -180]]
         self.pos = 0
-        self.prev_gear = 0
-        self.set_auto(INIT_GEARBOX_AUTO)
 
     def set_position(self, pos):
         # limit positions to range 0,1,2,3
@@ -62,13 +72,27 @@ class Gearbox:
             # set remote control light according to mode and position
             self.remote.light.on(self.POS_COLOR[self.auto][pos])
             # rotate gearbox to angle that corresponds position
-            self.gearbox.run_target(2000, target_angle=self.POS_ANGLE[pos], wait=True)
+            self.gearbox.run_target(2000, target_angle=self.pos_angle[pos], wait=False)
+            change_time = 0
+            while not self.gearbox.control.done() and change_time < self.GEAR_SWITCH_TIMEOUT:
+                # measure the switching time
+                change_time += 1
+                wait(1)
+            if change_time == self.GEAR_SWITCH_TIMEOUT:
+                # something went wrong, gearbox position mismatch - set LED to red
+                self.remote.light.on(Color.RED)
+                # stop switching and recallibrate
+                self.gearbox.stop()
+                self.callibrate()
+                pos = 0
+                # 1st gear is set
+                self.remote.light.on(self.POS_COLOR[self.auto][pos])
             if pos == 3:
                 # remeber gear used before switching to dumper
                 self.prev_gear = self.pos
             self.pos = pos
             print('Position:', pos, self.gearbox.angle(), 
-                  'error:', self.POS_ANGLE[pos]-self.gearbox.angle(),
+                  'error:', self.pos_angle[pos]-self.gearbox.angle(),
                   'auto:', bool(self.auto))
 
     def dumper(self):
@@ -164,7 +188,7 @@ if __name__ == '__main__':
     else:
         BUTTON_DRIVE_FWD, BUTTON_DRIVE_BACK = Button.LEFT_PLUS, Button.LEFT_MINUS
         BUTTON_STEER_LEFT, BUTTON_STEER_RIGHT = Button.RIGHT_PLUS, Button.RIGHT_MINUS
-    
+
     # main loop
     while True:
         key.update(remote)
