@@ -4,6 +4,7 @@
 # Remote is currently in beta. This program only works with firmware
 # installed from <https://beta.pybricks.com>.
 
+from pybricks.hubs import TechnicHub
 from pybricks.pupdevices import Motor, Remote
 from pybricks.parameters import Port, Button, Color
 from pybricks.tools import wait
@@ -15,14 +16,14 @@ LEFT_STEER_RIGHT_DRIVE = True
 INIT_GEARBOX_AUTO = True
 
 # steering settings
-STEER_ANGLE = 60
+STEER_ANGLE = 45 # GC84: lower value
 STEER_SPEED = 1000
 
 class Gearbox:
     # if speed is stable above, automatic gearbox will increase gear
-    HI_SPEED = 1750
+    HI_SPEED = 1400 # 1750
     # if speed is stable below, automatic gearbox will decrease gear
-    LO_SPEED = 800
+    LO_SPEED = 300 # 800
     # time [ms] after gearbox switches to 1st gear when drive remains idle
     GEAR_RESET_TIMEOUT = 2000
     # time [ms] of speed stability measurement before automatic gear change
@@ -44,7 +45,7 @@ class Gearbox:
         self.speed = 0
         # initialize L motor
         self.gearbox = Motor(Port.B)
-        self.gearbox.control.limits(speed=2000, acceleration=4000)
+        # self.gearbox.control.limits(speed=2000, acceleration=4000) # GC84: unsafe value? Left standard value
         self.callibrate()
         # set defaults
         self.prev_gear = 0
@@ -53,11 +54,11 @@ class Gearbox:
     def callibrate(self):
         # callibrate gearbox motor by finding its physical rotation limit; 
         # first, move left at full power to handle possible jam in gearbox
-        self.gearbox.run_until_stalled(500, duty_limit=100)
+        self.gearbox.run_until_stalled(360, duty_limit=100) # GC84: lower speed
         # second, correct the position
-        self.gearbox.run_angle(500, -90)
+        self.gearbox.run_angle(360, -90) # GC84: lower speed
         # finally move left with small power to avoid twisting 12-axle and measurement error
-        stalled_angle = self.gearbox.run_until_stalled(500, duty_limit=10)
+        stalled_angle = self.gearbox.run_until_stalled(360, duty_limit=10) # GC84: lower speed
         # round to multiple of 90 degrees and subtract angle of physical block (90deg)
         base_angle = 90*round(stalled_angle/90)-90
         # adjust settings of possible motor positions
@@ -65,6 +66,7 @@ class Gearbox:
         self.pos = 0
 
     def set_position(self, pos):
+        global hub
         # limit positions to range 0,1,2,3
         pos = min(3, max(pos, 0))
         # apply new position if it is different from current one
@@ -72,28 +74,31 @@ class Gearbox:
             # set remote control light according to mode and position
             self.remote.light.on(self.POS_COLOR[self.auto][pos])
             # rotate gearbox to angle that corresponds position
-            self.gearbox.run_target(2000, target_angle=self.pos_angle[pos], wait=False)
+            self.gearbox.run_target(720, target_angle=self.pos_angle[pos], wait=False) # # GC84: lower speed from 2000
             change_time = 0
             while not self.gearbox.control.done() and change_time < self.GEAR_SWITCH_TIMEOUT:
                 # measure the switching time
                 change_time += 1
                 wait(1)
             if change_time == self.GEAR_SWITCH_TIMEOUT:
-                # something went wrong, gearbox position mismatch - set LED to red
-                self.remote.light.on(Color.RED)
+                # GCopper1984 Cool function but it is not clear
+                # something went wrong, gearbox position mismatch - set LED to red           
+                #self.remote.light.on(Color.RED) # GC84 This create confusion while you are using the model
+                hub.light.on(Color.RED) # HC84 Turn red hub light instead
                 # stop switching and recallibrate
                 self.gearbox.stop()
                 self.callibrate()
                 pos = 0
                 # 1st gear is set
+                hub.light.on(Color.GREEN) # GC84 OK, start play!
                 self.remote.light.on(self.POS_COLOR[self.auto][pos])
             if pos == 3:
                 # remeber gear used before switching to dumper
                 self.prev_gear = self.pos
             self.pos = pos
-            print('Position:', pos, self.gearbox.angle(), 
-                  'error:', self.pos_angle[pos]-self.gearbox.angle(),
-                  'auto:', bool(self.auto))
+            #print('Position:', pos, self.gearbox.angle(), 
+            #      'error:', self.pos_angle[pos]-self.gearbox.angle(),
+            #      'auto:', bool(self.auto))
 
     def dumper(self):
         # return whether gearbox is set to drive dumper
@@ -164,9 +169,15 @@ def direction(positive, negative):
     return int(bool(positive)) - int(bool(negative))
 
 if __name__ == '__main__':
+    #print('Start main.')
+    connect_flashing_time = [75, 75, 75, 75, 75, 1000]
+    hub = TechnicHub()
+    hub.light.blink(Color.WHITE, connect_flashing_time) # Flashing led while waiting connection as remote do
+
     # Connect to the remote.
     remote = Remote()
-    print('Remote connected.')
+    #print('Remote connected.')
+    hub.light.on(Color.YELLOW) # Wait for calibration
 
     # initialize driving motor
     drive = Motor(Port.A)
@@ -174,8 +185,8 @@ if __name__ == '__main__':
     # initialize steering motor
     steer = Motor(Port.D)
     kp, ki, _, _, _ = steer.control.pid()
-    steer.control.limits(speed=STEER_SPEED, acceleration=3000)
-    steer.control.pid(kp=kp*8, ki=ki*8, integral_range=60)
+    #steer.control.limits(speed=STEER_SPEED, acceleration=3000) # GC84: Use standard value
+    #steer.control.pid(kp=kp*2, ki=ki*2, integral_range=40) #steer.control.pid(kp=kp*8, ki=ki*8, integral_range=60) # GC84: use standard value
 
     # initialize gearbox
     gearbox = Gearbox(remote)
@@ -189,8 +200,13 @@ if __name__ == '__main__':
         BUTTON_DRIVE_FWD, BUTTON_DRIVE_BACK = Button.LEFT_PLUS, Button.LEFT_MINUS
         BUTTON_STEER_LEFT, BUTTON_STEER_RIGHT = Button.RIGHT_PLUS, Button.RIGHT_MINUS
 
+    #print('Start main loop.')
+    hub.light.on(Color.GREEN) # Calibration completed, start the FUN!
+
     # main loop
     while True:
+        # DEBUG: check max speeed
+        #print(drive.speed())
         key.update(remote)
 
         # gearbox control
@@ -226,6 +242,7 @@ if __name__ == '__main__':
             gearbox.idle(not gearbox.dumper())
         
         # steering control
+        # GC84: this is always setting target position, button pressed should be fired only one time, return to center should be fired on button button released event
         steer_direction = direction(key.pressed(BUTTON_STEER_RIGHT),
                                     key.pressed(BUTTON_STEER_LEFT))
         steer.run_target(STEER_SPEED, steer_direction*STEER_ANGLE, wait=False)
