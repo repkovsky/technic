@@ -18,6 +18,7 @@ INIT_GEARBOX_AUTO = True
 # steering settings
 STEER_ANGLE = 65
 STEER_SPEED = 1000
+STEER_HARDNESS = 4
  
 class Gearbox:
     # if speed is stable above, automatic gearbox will increase gear
@@ -46,7 +47,6 @@ class Gearbox:
         self.speed = 0
         # initialize L motor
         self.gearbox = Motor(Port.B)
-        #self.gearbox.control.limits(speed=2000, acceleration=4000)
         self.calibrate()
         # set defaults
         self.prev_gear = 0
@@ -164,7 +164,7 @@ def direction(positive, negative):
     return int(bool(positive)) - int(bool(negative))
  
 if __name__ == '__main__':
-    CONNECT_FLASHING_TIME = [75, 75, 75, 75, 75, 1000]
+    CONNECT_FLASHING_TIME = [75]*5 + [1000]
     hub = TechnicHub()
     # Flashing led while waiting connection as remote do
     hub.light.blink(Color.WHITE, CONNECT_FLASHING_TIME)
@@ -182,8 +182,8 @@ if __name__ == '__main__':
     # initialize steering motor
     steer = Motor(Port.D)
     kp, ki, _, _, _ = steer.control.pid()
-    steer.control.limits(speed=STEER_SPEED, acceleration=3000)
-    steer.control.pid(kp=kp*8, ki=ki*8, integral_range=60)
+    steer.control.limits(speed=STEER_SPEED)
+    steer.control.pid(kp=kp*STEER_HARDNESS, ki=ki*STEER_HARDNESS, integral_range=60)
  
     # initialize gearbox
     gearbox = Gearbox(remote, hub)
