@@ -1,29 +1,29 @@
 # Controlling LEGO Volvo Articulated Hauler (42114) with Bluetooth Remote (88010)
 # Version 1.1
-
+ 
 # Remote is currently in beta. This program only works with firmware
 # installed from <https://beta.pybricks.com>.
-
+ 
 from pybricks.hubs import TechnicHub
 from pybricks.pupdevices import Motor, Remote
 from pybricks.parameters import Port, Button, Color
 from pybricks.tools import wait
-
+ 
 # control buttons swapping
 LEFT_STEER_RIGHT_DRIVE = True
-
+ 
 # set gearbox to AUTO mode at startup?
 INIT_GEARBOX_AUTO = True
-
+ 
 # steering settings
-STEER_ANGLE = 45 # GC84: lower value
+STEER_ANGLE = 65
 STEER_SPEED = 1000
-
+ 
 class Gearbox:
     # if speed is stable above, automatic gearbox will increase gear
-    HI_SPEED = 1400 # 1750
+    HI_SPEED = 1400
     # if speed is stable below, automatic gearbox will decrease gear
-    LO_SPEED = 300 # 800
+    LO_SPEED = 300
     # time [ms] after gearbox switches to 1st gear when drive remains idle
     GEAR_RESET_TIMEOUT = 2000
     # time [ms] of speed stability measurement before automatic gear change
@@ -37,36 +37,36 @@ class Gearbox:
     POS_COLOR = {True: [Color.CYAN, Color.BLUE, Color.MAGENTA, Color.GREEN],
                  False: [Color.ORANGE,  Color(h=15, s=100, v=100),
                          Color(h=5, s=100, v=100), Color.GREEN]}
-    def __init__(self, remote):
+    def __init__(self, remote, hub):
         # initialize class properties
         self.remote = remote
+        self.hub = hub
         self.speed_timer = 0
         self.idle_timer = 0
         self.speed = 0
         # initialize L motor
         self.gearbox = Motor(Port.B)
-        # self.gearbox.control.limits(speed=2000, acceleration=4000) # GC84: unsafe value? Left standard value
-        self.callibrate()
+        #self.gearbox.control.limits(speed=2000, acceleration=4000)
+        self.calibrate()
         # set defaults
         self.prev_gear = 0
         self.set_auto(INIT_GEARBOX_AUTO)
-
-    def callibrate(self):
-        # callibrate gearbox motor by finding its physical rotation limit; 
+ 
+    def calibrate(self):
+        # calibrate gearbox motor by finding its physical rotation limit; 
         # first, move left at full power to handle possible jam in gearbox
-        self.gearbox.run_until_stalled(360, duty_limit=100) # GC84: lower speed
+        self.gearbox.run_until_stalled(360, duty_limit=100)
         # second, correct the position
-        self.gearbox.run_angle(360, -90) # GC84: lower speed
+        self.gearbox.run_angle(360, -90)
         # finally move left with small power to avoid twisting 12-axle and measurement error
-        stalled_angle = self.gearbox.run_until_stalled(360, duty_limit=10) # GC84: lower speed
+        stalled_angle = self.gearbox.run_until_stalled(360, duty_limit=10)
         # round to multiple of 90 degrees and subtract angle of physical block (90deg)
         base_angle = 90*round(stalled_angle/90)-90
         # adjust settings of possible motor positions
         self.pos_angle = [p+base_angle for p in [90, 0, -90, -180]]
         self.pos = 0
-
+ 
     def set_position(self, pos):
-        global hub
         # limit positions to range 0,1,2,3
         pos = min(3, max(pos, 0))
         # apply new position if it is different from current one
@@ -74,41 +74,36 @@ class Gearbox:
             # set remote control light according to mode and position
             self.remote.light.on(self.POS_COLOR[self.auto][pos])
             # rotate gearbox to angle that corresponds position
-            self.gearbox.run_target(720, target_angle=self.pos_angle[pos], wait=False) # # GC84: lower speed from 2000
+            self.gearbox.run_target(720, target_angle=self.pos_angle[pos], wait=False)
             change_time = 0
             while not self.gearbox.control.done() and change_time < self.GEAR_SWITCH_TIMEOUT:
                 # measure the switching time
                 change_time += 1
                 wait(1)
             if change_time == self.GEAR_SWITCH_TIMEOUT:
-                # GCopper1984 Cool function but it is not clear
-                # something went wrong, gearbox position mismatch - set LED to red           
-                #self.remote.light.on(Color.RED) # GC84 This create confusion while you are using the model
-                hub.light.on(Color.RED) # HC84 Turn red hub light instead
-                # stop switching and recallibrate
+                # something went wrong, gearbox position mismatch - set LED to red
+                self.hub.light.on(Color.RED)
+                # stop switching and recalibrate
                 self.gearbox.stop()
-                self.callibrate()
+                self.calibrate()
                 pos = 0
                 # 1st gear is set
-                hub.light.on(Color.GREEN) # GC84 OK, start play!
                 self.remote.light.on(self.POS_COLOR[self.auto][pos])
+                self.hub.light.on(Color.GREEN)
             if pos == 3:
-                # remeber gear used before switching to dumper
+                # remember gear used before switching to dumper
                 self.prev_gear = self.pos
             self.pos = pos
-            #print('Position:', pos, self.gearbox.angle(), 
-            #      'error:', self.pos_angle[pos]-self.gearbox.angle(),
-            #      'auto:', bool(self.auto))
-
+ 
     def dumper(self):
         # return whether gearbox is set to drive dumper
         return self.pos == 3
-
+ 
     def set_auto(self, auto):
         # set AUTO/MANUAL mode and update control light
         self.auto = auto
         self.remote.light.on(self.POS_COLOR[self.auto][self.pos])
-
+ 
     def get_auto_gear(self, speed):
         # returns changed gear if speed is stable below/above LO_SPEED/HI_SPEED threshold
         if self.auto and not self.dumper():
@@ -131,7 +126,7 @@ class Gearbox:
                     elif self.pos < 2 and self.speed > self.HI_SPEED:
                         return self.pos + 1
         return None
-
+ 
     def idle(self, persists):
         if persists:
             # increase idle time
@@ -143,7 +138,7 @@ class Gearbox:
                 gearbox.set_position(0)
         else:
             self.idle_timer = 0
-
+ 
 class Key:
     def __init__(self):
         # variables to store current and previous state of buttons
@@ -155,42 +150,44 @@ class Key:
         self.prev_pressed = list(self.now_pressed)
         # update list of pressed keys
         self.now_pressed = remote.buttons.pressed()
-
+ 
     def pressed(self, key):
         # return whether key is now pressed
         return key in self.now_pressed
-
+ 
     def released(self, key):
         # return keys which were released after last update
         return key in self.prev_pressed and key not in self.now_pressed
-
+ 
 def direction(positive, negative):
     # return resultant value of two boolean directions
     return int(bool(positive)) - int(bool(negative))
-
+ 
 if __name__ == '__main__':
-    #print('Start main.')
-    connect_flashing_time = [75, 75, 75, 75, 75, 1000]
+    CONNECT_FLASHING_TIME = [75, 75, 75, 75, 75, 1000]
     hub = TechnicHub()
-    hub.light.blink(Color.WHITE, connect_flashing_time) # Flashing led while waiting connection as remote do
-
+    # Flashing led while waiting connection as remote do
+    hub.light.blink(Color.WHITE, CONNECT_FLASHING_TIME)
+    
     # Connect to the remote.
     remote = Remote()
-    #print('Remote connected.')
-    hub.light.on(Color.YELLOW) # Wait for calibration
-
+    print('Remote connected.')
+ 
+    # Wait for calibration
+    hub.light.on(Color.YELLOW)
+ 
     # initialize driving motor
     drive = Motor(Port.A)
-
+ 
     # initialize steering motor
     steer = Motor(Port.D)
     kp, ki, _, _, _ = steer.control.pid()
-    #steer.control.limits(speed=STEER_SPEED, acceleration=3000) # GC84: Use standard value
-    #steer.control.pid(kp=kp*2, ki=ki*2, integral_range=40) #steer.control.pid(kp=kp*8, ki=ki*8, integral_range=60) # GC84: use standard value
-
+    steer.control.limits(speed=STEER_SPEED, acceleration=3000)
+    steer.control.pid(kp=kp*8, ki=ki*8, integral_range=60)
+ 
     # initialize gearbox
-    gearbox = Gearbox(remote)
-
+    gearbox = Gearbox(remote, hub)
+ 
     # initialize remote keys
     key = Key()
     if LEFT_STEER_RIGHT_DRIVE:
@@ -199,16 +196,14 @@ if __name__ == '__main__':
     else:
         BUTTON_DRIVE_FWD, BUTTON_DRIVE_BACK = Button.LEFT_PLUS, Button.LEFT_MINUS
         BUTTON_STEER_LEFT, BUTTON_STEER_RIGHT = Button.RIGHT_PLUS, Button.RIGHT_MINUS
-
-    #print('Start main loop.')
-    hub.light.on(Color.GREEN) # Calibration completed, start the FUN!
-
+    
+    # Calibration completed, start the FUN!
+    hub.light.on(Color.GREEN)
+ 
     # main loop
     while True:
-        # DEBUG: check max speeed
-        #print(drive.speed())
         key.update(remote)
-
+ 
         # gearbox control
         if key.released(Button.LEFT):
             # manual - change to lower gear; auto - switch to driving
@@ -242,7 +237,6 @@ if __name__ == '__main__':
             gearbox.idle(not gearbox.dumper())
         
         # steering control
-        # GC84: this is always setting target position, button pressed should be fired only one time, return to center should be fired on button button released event
         steer_direction = direction(key.pressed(BUTTON_STEER_RIGHT),
                                     key.pressed(BUTTON_STEER_LEFT))
         steer.run_target(STEER_SPEED, steer_direction*STEER_ANGLE, wait=False)
