@@ -183,7 +183,7 @@ if __name__ == '__main__':
     steer = Motor(Port.D)
     kp, ki, _, _, _ = steer.control.pid()
     steer.control.limits(speed=STEER_SPEED)
-    steer.control.pid(kp=kp*STEER_HARDNESS, ki=ki*STEER_HARDNESS, integral_range=60)
+    steer.control.pid(kp=kp*STEER_HARDNESS, ki=ki*STEER_HARDNESS) #, integral_range=60) integral_range keyword argument eliminated from latest release (3.1.0), using it causes Type Error
  
     # initialize gearbox
     gearbox = Gearbox(remote, hub)
