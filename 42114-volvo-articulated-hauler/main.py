@@ -1,8 +1,5 @@
 # Controlling LEGO Volvo Articulated Hauler (42114) with Bluetooth Remote (88010)
-# Version 1.1
- 
-# Remote is currently in beta. This program only works with firmware
-# installed from <https://beta.pybricks.com>.
+# Version 1.2, works with PyBricks 3.1
  
 from pybricks.hubs import TechnicHub
 from pybricks.pupdevices import Motor, Remote
@@ -38,10 +35,12 @@ class Gearbox:
     POS_COLOR = {True: [Color.CYAN, Color.BLUE, Color.MAGENTA, Color.GREEN],
                  False: [Color.ORANGE,  Color(h=15, s=100, v=100),
                          Color(h=5, s=100, v=100), Color.GREEN]}
-    def __init__(self, remote, hub):
-        # initialize class properties
+    def __init__(self, remote: Remote, hub: TechnicHub, drive: Motor):
+        # assign external objects to properties of the class
         self.remote = remote
         self.hub = hub
+        self.drive = drive
+        # initialize control variables
         self.speed_timer = 0
         self.idle_timer = 0
         self.speed = 0
@@ -49,13 +48,13 @@ class Gearbox:
         self.gearbox = Motor(Port.B)
         self.calibrate()
         # set defaults
-        self.prev_gear = 0
+        self.last_auto_pos = 0
         self.set_auto(INIT_GEARBOX_AUTO)
  
     def calibrate(self):
         # calibrate gearbox motor by finding its physical rotation limit; 
         # first, move left at full power to handle possible jam in gearbox
-        self.gearbox.run_until_stalled(360, duty_limit=100)
+        self.gearbox.run_until_stalled(360)
         # second, correct the position
         self.gearbox.run_angle(360, -90)
         # finally move left with small power to avoid twisting 12-axle and measurement error
@@ -69,30 +68,34 @@ class Gearbox:
     def set_position(self, pos):
         # limit positions to range 0,1,2,3
         pos = min(3, max(pos, 0))
-        # apply new position if it is different from current one
+        # apply new position, if it is different from the current one
         if self.pos != pos:
             # set remote control light according to mode and position
             self.remote.light.on(self.POS_COLOR[self.auto][pos])
+            # stop drive to allow smooth gear change
+            self.drive.stop()
             # rotate gearbox to angle that corresponds position
             self.gearbox.run_target(720, target_angle=self.pos_angle[pos], wait=False)
+            # control time of gear change, to detect possible position mismatch
             change_time = 0
             while not self.gearbox.control.done() and change_time < self.GEAR_SWITCH_TIMEOUT:
                 # measure the switching time
                 change_time += 1
                 wait(1)
             if change_time == self.GEAR_SWITCH_TIMEOUT:
-                # something went wrong, gearbox position mismatch - set LED to red
+                # timeout occured - something went wrong, true gearbox position
+                # is different than expected - set hub LED to red
                 self.hub.light.on(Color.RED)
                 # stop switching and recalibrate
                 self.gearbox.stop()
                 self.calibrate()
-                pos = 0
                 # 1st gear is set
+                pos = 0
                 self.remote.light.on(self.POS_COLOR[self.auto][pos])
                 self.hub.light.on(Color.GREEN)
-            if pos == 3:
-                # remember gear used before switching to dumper
-                self.prev_gear = self.pos
+            # remember last automatic gear
+            self.last_auto_pos = self.pos if pos == 3 else pos
+            # update gear state variable
             self.pos = pos
  
     def dumper(self):
@@ -104,9 +107,10 @@ class Gearbox:
         self.auto = auto
         self.remote.light.on(self.POS_COLOR[self.auto][self.pos])
  
-    def get_auto_gear(self, speed):
-        # returns changed gear if speed is stable below/above LO_SPEED/HI_SPEED threshold
+    def update_auto_gear(self):
+        # in AUTO mode changes gear if speed is stable below/above LO_SPEED/HI_SPEED threshold
         if self.auto and not self.dumper():
+            speed = self.drive.speed()
             # basic low-pass filtering (exponential smoothing)
             self.speed += self.SMOOTHING*(abs(speed)-self.speed)
             wait(10)
@@ -122,10 +126,9 @@ class Gearbox:
                     # depending on speed and current position,
                     # return lower, higher or None gear (no change) 
                     if self.pos > 0 and self.speed < self.LO_SPEED:
-                        return self.pos - 1
+                        self.set_position(self.pos - 1)
                     elif self.pos < 2 and self.speed > self.HI_SPEED:
-                        return self.pos + 1
-        return None
+                        self.set_position(self.pos + 1)
  
     def idle(self, persists):
         if persists:
@@ -183,10 +186,10 @@ if __name__ == '__main__':
     steer = Motor(Port.D)
     kp, ki, _, _, _ = steer.control.pid()
     steer.control.limits(speed=STEER_SPEED)
-    steer.control.pid(kp=kp*STEER_HARDNESS, ki=ki*STEER_HARDNESS) #, integral_range=60) integral_range keyword argument eliminated from latest release (3.1.0), using it causes Type Error
+    steer.control.pid(kp=kp*STEER_HARDNESS, ki=ki*STEER_HARDNESS)
  
     # initialize gearbox
-    gearbox = Gearbox(remote, hub)
+    gearbox = Gearbox(remote, hub, drive)
  
     # initialize remote keys
     key = Key()
@@ -203,11 +206,11 @@ if __name__ == '__main__':
     # main loop
     while True:
         key.update(remote)
- 
+
         # gearbox control
         if key.released(Button.LEFT):
             # manual - change to lower gear; auto - switch to driving
-            new_pos = gearbox.prev_gear if gearbox.auto else gearbox.pos-1
+            new_pos = gearbox.last_auto_pos if gearbox.auto else gearbox.pos-1
             gearbox.set_position(new_pos)
         elif key.released(Button.RIGHT):
             # manual - change to higher gear/dumper; auto - switch to dumper
@@ -221,19 +224,16 @@ if __name__ == '__main__':
         drive_direction = direction(key.pressed(BUTTON_DRIVE_FWD),
                                     key.pressed(BUTTON_DRIVE_BACK))
         if drive_direction in [-1,1]:
-            auto_gear = gearbox.get_auto_gear(drive.speed())
-            if auto_gear is not None:
-                # stop motor to allow smooth gear switch
-                drive.stop()
-                gearbox.set_position(auto_gear)
-            # for dumper direction of rotation must be inverted
+            # change gear automatically, if gearbox is in AUTO mode
+            gearbox.update_auto_gear()
+            # for dumper, direction of rotation must be inverted
             invert = 1 if gearbox.dumper() else -1
             drive.dc(invert*drive_direction*100.0)
             # report active drive
             gearbox.idle(False)
         else:
             drive.stop()
-            # report idle drive if not set to dumper
+            # report idle drive, if not set to dumper
             gearbox.idle(not gearbox.dumper())
         
         # steering control
